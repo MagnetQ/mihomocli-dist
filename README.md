@@ -1,11 +1,21 @@
 # mihomocli
 
-Command-line tool for managing Mihomo proxy service.
+Command-line tool for managing [Mihomo](https://github.com/MetaCubeX/Mihomo) proxy service.
+
+## Prerequisites
+
+- [Mihomo](https://github.com/MetaCubeX/Mihomo) must be installed and running with external API enabled
+- `curl` and `jq` installed on your system
+
+> **Note:** Make sure Mihomo service is running before using this tool. Start it with:
+> ```bash
+> brew services start mihomo
+> ```
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MagnetQ/mihomocli-dist/main/mihomocli -o /opt/homebrew/bin/mihomocli && chmod +x /opt/homebrew/bin/mihomocli
+curl -fsSL https://raw.githubusercontent.com/MagnetQ/mihomocli-dist/v1.0.0/mihomocli -o /opt/homebrew/bin/mihomocli && chmod +x /opt/homebrew/bin/mihomocli
 ```
 
 ## Usage
@@ -48,11 +58,6 @@ mihomocli restart
 # Show current node
 mihomocli node
 ```
-
-## Requirements
-
-- [Mihomo](https://github.com/MetaCubeX/Mihomo) proxy service must be running with external API enabled
-- `curl` and `jq` installed
 
 ## License
 
