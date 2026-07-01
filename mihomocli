@@ -127,7 +127,7 @@ show_status() {
     local node=$(curl -s "$API/proxies" | jq -r '.proxies.Proxy.now')
     local mode=$(curl -s "$API/configs" | jq -r '.mode')
     local tun=$(get_tun_status)
-    local ip=$(curl -s --connect-timeout 3 https://myip.ipip.net 2>/dev/null | grep -oP '\d+\.\d+\.\d+\.\d+' || echo 'N/A')
+    local ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null || echo 'N/A')
 
     local actual_node=$(curl -s "$API/proxies" | jq -r --arg n "$node" '.proxies[$n].now // $n')
     [[ -z "$actual_node" || "$actual_node" == "null" ]] && actual_node="$node"
@@ -291,6 +291,14 @@ case "$1" in
             echo "Mihomo is already running"
         else
             if start_mihomo; then
+                # Check if current node is Japan
+                current_node=$(curl -s "$API/proxies" | jq -r '.proxies.Proxy.now')
+                if [[ ! "$current_node" =~ ^日本 ]]; then
+                    echo ""
+                    echo "Warning: Current node is '$current_node', not a Japan node."
+                    echo "Use 'mihomocli switch jp' to switch to Japan."
+                    echo ""
+                fi
                 echo "Mihomo has started"
                 show_status
             else
