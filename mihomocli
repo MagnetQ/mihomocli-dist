@@ -1,0 +1,280 @@
+#!/bin/bash
+
+# Mihomo CLI Tool
+# Usage: mihomo-cli <command>
+
+API="http://127.0.0.1:9090"
+MIHOMO_BIN="/opt/homebrew/opt/mihomo/bin/mihomo"
+MIHOMO_DIR="/opt/homebrew/etc/mihomo"
+
+show_status() {
+    local node=$(curl -s $API/proxies | jq -r '.proxies.Proxy.now')
+    local mode=$(curl -s $API/configs | jq -r '.mode')
+    local tun=$(curl -s $API/configs | jq -r '.tun.enable')
+    local ip=$(curl -s https://ifconfig.me 2>/dev/null || echo 'N/A')
+
+    # If node is a group name, find the actual current node within that group
+    local actual_node=$(curl -s $API/proxies | jq -r --arg n "$node" '.proxies[$n].now // $n')
+    if [[ "$actual_node" == "null" || -z "$actual_node" ]]; then
+        actual_node="$node"
+    fi
+
+    # Determine which group the current node belongs to
+    local group="$node"
+    for g in 美国 日本 香港 新加坡 台湾 韩国; do
+        local nodes=$(curl -s $API/proxies | jq -r --arg g "$g" '.proxies[$g].all[]' 2>/dev/null)
+        if echo "$nodes" | grep -q "^${actual_node}$"; then
+            group="$g"
+            break
+        fi
+    done
+
+    echo "=========================================="
+    echo "  Current node: $actual_node"
+    echo "  Node IP:   $ip"
+    if [[ -n "$group" ]]; then
+        echo ""
+        echo "  === $group node latency ==="
+        local nodes=$(curl -s $API/proxies | jq -r --arg g "$group" '.proxies[$g].all[]')
+        for n in $nodes; do
+            local delay=$(curl -s $API/proxies/"$n" 2>/dev/null | jq '[.extra."http://www.gstatic.com/generate_204".history[].delay] | map(select(. > 0)) | .[0]' 2>/dev/null)
+            if [[ -n "$delay" && "$delay" != "null" ]]; then
+                if [[ "$n" == "$actual_node" ]]; then
+                    echo "  ★ $n: ${delay}ms"
+                else
+                    echo "    $n: ${delay}ms"
+                fi
+            fi
+        done
+    fi
+    echo ""
+    echo "  Mode: $mode | TUN: $([[ "$tun" == "true" ]] && echo "ON" || echo "OFF")"
+    echo "=========================================="
+}
+
+show_latency() {
+    local group="$1"
+    local nodes=$(curl -s $API/proxies | jq -r --arg g "$group" '.proxies[$g].all[]')
+    echo "=== $group node latency ==="
+    for node in $nodes; do
+        local delay=$(curl -s $API/proxies/"$node" 2>/dev/null | jq '[.extra."http://www.gstatic.com/generate_204".history[].delay] | map(select(. > 0)) | .[0]' 2>/dev/null)
+        if [[ -n "$delay" && "$delay" != "null" ]]; then
+            echo "$node: ${delay}ms"
+        else
+            echo "$node: N/A"
+        fi
+    done
+    echo ""
+    echo "Current: $(curl -s $API/proxies | jq -r --arg g "$group" '.proxies[$g].now')"
+    echo "IP:   $(curl -s https://ifconfig.me 2>/dev/null || echo 'N/A')"
+}
+
+is_running() {
+    pgrep -f "$MIHOMO_BIN" > /dev/null 2>&1
+}
+
+cleanup_tun() {
+    # Clean up residual utun interfaces after stop
+    for utun in $(ifconfig 2>/dev/null | grep '^utun' | cut -d: -f1); do
+        sudo ifconfig "$utun" destroy 2>/dev/null
+    done
+}
+
+wait_for_stop() {
+    local max_wait=5
+    local waited=0
+    while is_running && [[ $waited -lt $max_wait ]]; do
+        sleep 0.5
+        ((waited+=1))
+    done
+    ! is_running
+}
+
+wait_for_start() {
+    local max_wait=10
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        curl -s --connect-timeout 1 "$API/proxies" > /dev/null 2>&1 && return 0
+        sleep 0.5
+        ((waited+=1))
+    done
+    return 1
+}
+
+stop_mihomo() {
+    if is_running; then
+        # Try brew services first (handles launchd-managed mihomo)
+        sudo brew services stop mihomo 2>/dev/null
+        sleep 2
+        # Force kill any remaining processes
+        sudo pkill -f "$MIHOMO_BIN" 2>/dev/null
+        wait_for_stop
+    fi
+}
+
+start_mihomo() {
+    stop_mihomo
+    sudo brew services start mihomo 2>/dev/null
+    wait_for_start
+}
+
+case "$1" in
+    status)
+        if is_running; then
+            show_status
+        else
+            echo "Mihomo is not running, use 'mihomo-cli start' to start"
+        fi
+        ;;
+    switch)
+        if ! is_running; then
+            echo "Mihomo is not running, please start it first"
+            exit 1
+        fi
+        case "$2" in
+            us)
+                curl -s -X PUT $API/proxies/Proxy -d '{"name":"美国"}' -H "Content-Type: application/json"
+                echo ""
+                show_latency "美国"
+                ;;
+            jp)
+                curl -s -X PUT $API/proxies/Proxy -d '{"name":"日本"}' -H "Content-Type: application/json"
+                echo ""
+                show_latency "日本"
+                ;;
+            auto)
+                curl -s -X PUT $API/proxies/Proxy -d '{"name":"Auto"}' -H "Content-Type: application/json"
+                echo "Switched to Auto"
+                ;;
+            *)
+                echo "Usage: mihomo-cli switch <us|jp|auto>"
+                ;;
+        esac
+        ;;
+    latency)
+        if ! is_running; then
+            echo "Mihomo is not running"
+            exit 1
+        fi
+        case "$2" in
+            us)
+                show_latency "美国"
+                ;;
+            jp)
+                show_latency "日本"
+                ;;
+            all)
+                show_latency "美国"
+                show_latency "日本"
+                ;;
+            *)
+                echo "Usage: mihomo-cli latency <us|jp|all>"
+                ;;
+        esac
+        ;;
+    mode)
+        if ! is_running; then
+            echo "Mihomo is not running"
+            exit 1
+        fi
+        case "$2" in
+            rule)
+                curl -s -X PUT $API/configs -d '{"mode":"rule"}' -H "Content-Type: application/json"
+                echo "Mode: rule"
+                ;;
+            global)
+                curl -s -X PUT $API/configs -d '{"mode":"global"}' -H "Content-Type: application/json"
+                echo "Mode: global"
+                ;;
+            direct)
+                curl -s -X PUT $API/configs -d '{"mode":"direct"}' -H "Content-Type: application/json"
+                echo "Mode: direct"
+                ;;
+            *)
+                echo "Usage: mihomo-cli mode <rule|global|direct>"
+                ;;
+        esac
+        ;;
+    tun)
+        if ! is_running; then
+            echo "Mihomo is not running"
+            exit 1
+        fi
+        case "$2" in
+            on)
+                sed -i '' 's/enable: false/enable: true/' $MIHOMO_DIR/config.yaml
+                start_mihomo
+                echo "TUN enabled, mihomo restarted"
+                ;;
+            off)
+                sed -i '' 's/enable: true/enable: false/' $MIHOMO_DIR/config.yaml
+                start_mihomo
+                echo "TUN disabled, mihomo restarted"
+                ;;
+            *)
+                echo "Usage: mihomo-cli tun <on|off>"
+                ;;
+        esac
+        ;;
+    node)
+        if is_running; then
+            curl -s $API/proxies | jq -r '.proxies.Proxy.now'
+        else
+            echo "Mihomo is not running"
+        fi
+        ;;
+    start)
+        if is_running; then
+            echo "Mihomo is already running"
+        else
+            if start_mihomo; then
+                echo "Mihomo has started"
+                show_status
+            else
+                echo "Failed to start, please check logs"
+            fi
+        fi
+        ;;
+    stop)
+        if is_running; then
+            tun=$(curl -s $API/configs | jq -r '.tun.enable' 2>/dev/null)
+            stop_mihomo
+            if [[ "$tun" == "true" ]]; then
+                cleanup_tun
+            fi
+            if is_running; then
+                echo "Failed to stop"
+            else
+                echo "Mihomo has stopped (TUN: $([[ "$tun" == "true" ]] && echo "ON" || echo "OFF"))"
+            fi
+        else
+            echo "Mihomo is not running"
+        fi
+        ;;
+    restart)
+        stop_mihomo
+        if start_mihomo; then
+            echo "Mihomo has restarted"
+            show_status
+        else
+            echo "Failed to restart, please check logs"
+        fi
+        ;;
+    help|--help|-h|"")
+        echo "Mihomo CLI Tool"
+        echo ""
+        echo "Usage: mihomo-cli <command>"
+        echo ""
+        echo "Commands:"
+        echo "  status               Show current status (node, mode, TUN)"
+        echo "  switch <us|jp|auto>  Switch proxy (URLTest auto selects)"
+        echo "  latency <us|jp|all> Show latency for all nodes in group"
+        echo "  mode <rule|global|direct>  Change mode"
+        echo "  tun <on|off>        Enable/disable TUN"
+        echo "  node                 Show current node"
+        echo "  start                Start mihomo"
+        echo "  stop                 Stop mihomo"
+        echo "  restart              Restart mihomo"
+        echo "  help                 Show this help message"
+        ;;
+esac
