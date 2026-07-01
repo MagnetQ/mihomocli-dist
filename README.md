@@ -16,7 +16,7 @@ Command-line tool for managing [Mihomo](https://github.com/MetaCubeX/Mihomo) pro
 
 ```bash
 # Install latest version
-curl -fsSL https://raw.githubusercontent.com/MagnetQ/mihomocli-dist/main/mihomocli -o /opt/homebrew/bin/mihomocli && chmod +x /opt/homebrew/bin/mihomocli
+curl -fsSL https://raw.githubusercontent.com/MagnetQ/mihomocli-dist/latest/mihomocli -o /opt/homebrew/bin/mihomocli && chmod +x /opt/homebrew/bin/mihomocli
 ```
 
 Or install a specific version:
